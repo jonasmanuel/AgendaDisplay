@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 
+// builtin ESP32 libs
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
@@ -23,26 +24,39 @@ const char* password = PASS;
 int textCursor = 10;
 
 WebServer server(80);
-Timezone Berlin;
+Timezone myTimeZone;
 
+// location for timezone
+#define LOCATION "Europe/Berlin"
+// how many hours in the past should be shown in the grid
 #define HISTORY_HRS 2
+// how many hours should be shown in the grid 
 #define SHOW_HRS 8
+
 #define HOUR 3600
 #define MINUTE 60
 
 #define GRID_LINE_OFFSET_LEFT 45
 #define GRID_LINE_OFFSET_TOP 100
 
+// Space each hour takes up
 #define GRID_SPACING_H (HEIGHT-GRID_LINE_OFFSET_TOP)/SHOW_HRS
+// space each minute takes up
 #define GRID_SPACING_M GRID_SPACING_H / 60.0
+// display rotation in degrees
 #define ROTATION 90
 
+// use specific width and height for your display
+#define EPD_WIDTH EPD_7IN5B_HD_WIDTH
+#define EPD_HEIGHT EPD_7IN5B_HD_HEIGHT
+
+// WIDTH and HEIGHT will be set according to ROTATION
 #if ROTATION == 90 || ROTATION == 180
-#define WIDTH EPD_7IN5B_HD_HEIGHT
-#define HEIGHT EPD_7IN5B_HD_WIDTH
+#define WIDTH EPD_HEIGHT
+#define HEIGHT EPD_WIDTH
 #else
-#define WIDTH EPD_7IN5B_HD_WIDTH
-#define HEIGHT EPD_7IN5B_HD_HEIGHT
+#define WIDTH EPD_WIDTH
+#define HEIGHT EPD_HEIGHT
 #endif
 
 time_t gridStart = 0;
@@ -85,13 +99,20 @@ void drawRoundedRect(int x_left, int y_start, int x_right, int y_end, int radius
   if (y_end - y_start < radius * 2) {
     radius = (y_end - y_start) / 2 ;
   }
-  // clear Background first
-  Paint_DrawRectangle(x_left, y_start, x_right, y_end, WHITE, Line_width, DRAW_FILL_FULL);
-  //draw inner rects
+  
+    //draw inner rects
   if (Draw_Fill == DRAW_FILL_FULL) {
     Paint_DrawRectangle(x_left, y_start + radius, x_right, y_end - radius, color, Line_width, Draw_Fill);
     Paint_DrawRectangle(x_left + radius, y_start, x_right - radius, y_end, color, Line_width, Draw_Fill);
   } else {
+    // clear Background first
+    //draw corners
+    drawArc(x_right - radius, y_end - radius , radius, WHITE,  0, 90, DRAW_FILL_FULL); // lower right
+    drawArc(x_left + radius, y_end - radius, radius, WHITE,  90, 180, DRAW_FILL_FULL); // lower left
+    drawArc(x_left + radius, y_start + radius, radius, WHITE,  180, 270, DRAW_FILL_FULL); // top left
+    drawArc(x_right - radius, y_start + radius, radius, WHITE,  270, 360, DRAW_FILL_FULL); // top right
+    Paint_DrawRectangle(x_left, y_start + radius, x_right, y_end - radius, WHITE, Line_width, DRAW_FILL_FULL);
+    Paint_DrawRectangle(x_left + radius, y_start, x_right - radius, y_end, WHITE, Line_width, DRAW_FILL_FULL);
     // draw border
     Paint_DrawLine(x_left + radius, y_start, x_right - radius, y_start, color, Line_width, LINE_STYLE_SOLID);
     Paint_DrawLine(x_left + radius, y_end, x_right - radius, y_end, color, Line_width, LINE_STYLE_SOLID);
@@ -113,28 +134,28 @@ int drawRoundedString(int x, int y, String str,  sFONT* Font, UWORD color, DRAW_
   int w = str.length() * font_w;
 
   drawRoundedRect(x, y , x + w + font_h, y + font_h, radius, color, DOT_PIXEL_1X1, Draw_Fill);
-  Paint_DrawString_EN(x + radius, y , Berlin.dateTime("H:i").c_str(), &Font16, color, WHITE);
+  Paint_DrawString_EN(x + radius, y , myTimeZone.dateTime("H:i").c_str(), &Font16, color, WHITE);
   return x + w + font_h;
 }
 
 void drawCurrentTimeMarker() {
-  int y = getY(Berlin.now());
+  int y = getY(myTimeZone.now());
   int font_offs = Font16.Height / 2;
   if (eventActive) {
     //cut white outline into event
     Paint_SelectImage(RYImage);
-    int x_line_start = drawRoundedString(5, y - font_offs, Berlin.dateTime("H:i").c_str(), &Font16, WHITE, DRAW_FILL_FULL);
+    int x_line_start = drawRoundedString(5, y - font_offs, myTimeZone.dateTime("H:i").c_str(), &Font16, WHITE, DRAW_FILL_FULL);
     Paint_DrawLine(x_line_start, y, WIDTH, y, WHITE, DOT_PIXEL_2X2, LINE_STYLE_SOLID);
     //draw marker in black
     Paint_SelectImage(BlackImage);
-    x_line_start = drawRoundedString(5, y - font_offs, Berlin.dateTime("H:i").c_str(), &Font16, BLACK, DRAW_FILL_FULL);
+    x_line_start = drawRoundedString(5, y - font_offs, myTimeZone.dateTime("H:i").c_str(), &Font16, BLACK, DRAW_FILL_FULL);
     Paint_DrawLine(x_line_start, y, WIDTH, y, BLACK, DOT_PIXEL_2X2, LINE_STYLE_SOLID);
   } else {
     //cut white outline into grid
     Paint_SelectImage(BlackImage);
-    drawRoundedString(5, y - font_offs, Berlin.dateTime("H:i").c_str(), &Font16, WHITE, DRAW_FILL_FULL);
+    drawRoundedString(5, y - font_offs, myTimeZone.dateTime("H:i").c_str(), &Font16, WHITE, DRAW_FILL_FULL);
     Paint_SelectImage(RYImage);
-    int x_line_start = drawRoundedString(5, y - font_offs, Berlin.dateTime("H:i").c_str(), &Font16, BLACK, DRAW_FILL_FULL);
+    int x_line_start = drawRoundedString(5, y - font_offs, myTimeZone.dateTime("H:i").c_str(), &Font16, BLACK, DRAW_FILL_FULL);
     Paint_DrawLine(x_line_start, y, WIDTH, y, BLACK, DOT_PIXEL_2X2, LINE_STYLE_SOLID);
   }
 }
@@ -206,12 +227,12 @@ void drawEvents() {
         JsonObject event = doc.as<JsonObject>();
         String title = event["title"].as<String>();
         time_t start = event["start"].as<int>();
-        time_t berlin_start = Berlin.tzTime(start, UTC_TIME);
+        time_t myTimeZone_start = myTimeZone.tzTime(start, UTC_TIME);
         time_t end = event["end"].as<int>();
-        time_t berlin_end = Berlin.tzTime(end, UTC_TIME);
+        time_t myTimeZone_end = myTimeZone.tzTime(end, UTC_TIME);
         String description = event["description"].as<String>();
         String location = event["location"].as<String>();
-        drawEvent(title, berlin_start, berlin_end, description);
+        drawEvent(title, myTimeZone_start, myTimeZone_end, description);
       }
     } while (eventStream.findUntil(",", "]"));
   }
@@ -227,7 +248,7 @@ void drawEvent(String title, time_t start, time_t end, String description) {
     Serial.println("Event out of range");
     return;
   }
-  boolean active = start <= Berlin.now() && end >= Berlin.now();
+  boolean active = start <= myTimeZone.now() && end >= myTimeZone.now();
   DRAW_FILL fill = DRAW_FILL_EMPTY;
   UWORD Color_Foreground = BLACK;
   UWORD Color_Background = WHITE;
@@ -248,20 +269,20 @@ void drawEvent(String title, time_t start, time_t end, String description) {
   int text_x = GRID_LINE_OFFSET_LEFT + borderRadius;
   int textCursor = y_start + borderRadius;
   textCursor = printText(title , text_x , textCursor, x_right - borderRadius, y_end - borderRadius, &Font20, Color_Background, Color_Foreground);
-  textCursor = printText(Berlin.dateTime(start, "(H:i - ") + Berlin.dateTime(end, "H:i)"), text_x , textCursor, x_right - borderRadius, y_end - borderRadius, &Font12, Color_Background, Color_Foreground);
+  textCursor = printText(myTimeZone.dateTime(start, "(H:i - ") + myTimeZone.dateTime(end, "H:i)"), text_x , textCursor, x_right - borderRadius, y_end - borderRadius, &Font12, Color_Background, Color_Foreground);
   textCursor = printText(removeHtml(description), text_x, textCursor, x_right - borderRadius, y_end - borderRadius, &Font12, Color_Background, Color_Foreground);
 }
 
 void drawAgenda() {
   clear();
   Paint_SelectImage(BlackImage);
-  gridStart = Berlin.now() - HISTORY_HRS * HOUR - Berlin.minute() * MINUTE - Berlin.second(); // 2h in the past
-  Serial.println("GridStart=" + Berlin.dateTime(gridStart));
-  centerText(10,  Berlin.dateTime(Berlin.now(), "d.m.y (~C~W W)"), &Font24, BLACK, WHITE);
-  centerText(35, "Last update: " + Berlin.dateTime("H:i:s"), &Font20, BLACK,  WHITE);
+  gridStart = myTimeZone.now() - HISTORY_HRS * HOUR - myTimeZone.minute() * MINUTE - myTimeZone.second(); // 2h in the past
+  Serial.println("GridStart=" + myTimeZone.dateTime(gridStart));
+  centerText(10,  myTimeZone.dateTime(myTimeZone.now(), "d.m.y (~C~W W)"), &Font24, BLACK, WHITE);
+  centerText(35, "Last update: " + myTimeZone.dateTime("H:i:s"), &Font20, BLACK,  WHITE);
   time_t t = gridStart;
   for (int i = 0; i < 8; i++) {
-    Paint_DrawString_EN(8, GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H, Berlin.dateTime(t, "H:00").c_str(), &Font12, WHITE, BLACK);
+    Paint_DrawString_EN(8, GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H, myTimeZone.dateTime(t, "H:00").c_str(), &Font12, WHITE, BLACK);
     Paint_DrawLine(GRID_LINE_OFFSET_LEFT, GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H, WIDTH, GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
     t = t + HOUR; //+1h
   }
@@ -357,7 +378,7 @@ void setup() {
 
   //Create a new image cache
   /* you have to edit the startup_stm32fxxx.s file and set a big enough heap size */
-  UWORD Imagesize = ((EPD_7IN5B_HD_WIDTH % 8 == 0) ? (EPD_7IN5B_HD_WIDTH / 8 ) : (EPD_7IN5B_HD_WIDTH / 8 + 1)) * EPD_7IN5B_HD_HEIGHT;
+  UWORD Imagesize = ((EPD_WIDTH % 8 == 0) ? (EPD_WIDTH / 8 ) : (EPD_WIDTH / 8 + 1)) * EPD_HEIGHT;
   if ((BlackImage = (UBYTE *)malloc(Imagesize)) == NULL) {
     Serial.println("Failed to apply for black memory...\r\n");
     while (1);
@@ -367,8 +388,8 @@ void setup() {
     while (1);
   }
   Serial.println("NewImage:BlackImage and RYImage\r\n");
-  Paint_NewImage(BlackImage, EPD_7IN5B_HD_WIDTH, EPD_7IN5B_HD_HEIGHT , ROTATION, WHITE);
-  Paint_NewImage(RYImage, EPD_7IN5B_HD_WIDTH, EPD_7IN5B_HD_HEIGHT , ROTATION, WHITE);
+  Paint_NewImage(BlackImage, EPD_WIDTH, EPD_HEIGHT , ROTATION, WHITE);
+  Paint_NewImage(RYImage, EPD_WIDTH, EPD_HEIGHT , ROTATION, WHITE);
 
 
   WiFi.mode(WIFI_STA);
@@ -387,15 +408,15 @@ void setup() {
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   // Activate mDNS this is used to be able to connect to the server
-  // with local DNS hostmane esp8266.local
+  // with local DNS hostmane agenda.local
   if (MDNS.begin("agenda")) {
     Serial.println("MDNS responder started");
   }
   Serial.println("Waiting for time sync...");
   waitForSync();
-  Berlin.setLocation("Europe/Berlin");
+  myTimeZone.setLocation(LOCATION);
 
-  Serial.println("It is: " + Berlin.dateTime());
+  Serial.println("It is: " + myTimeZone.dateTime());
 
   // Set server routing
   restServerRouting();
