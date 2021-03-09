@@ -184,16 +184,23 @@ int printText(String text,
               UWORD Color_Background = WHITE) {
   int textCursor = start_y;
   int charLimit = (x_limit - start_x) / Font12.Width;
-  while (text.length() > charLimit || text.indexOf('\n') != -1) {
+  while (text.length() > charLimit || text.indexOf("\n") != -1) {
     String sub;
-    int br = text.indexOf('\n');
+    int br = text.indexOf("\n");
     if (br != -1) {
       sub = text.substring(0, br);
       text = text.substring(br + 1);
-    }
-    if (text.length() > charLimit) {
+      if (sub.length() > charLimit) {
+        sub = sub.substring(0, charLimit);
+        text = sub.substring(charLimit) +"\n"+text;
+      }
+    } else if (text.length() > charLimit) {
       sub = text.substring(0, charLimit);
       text = text.substring(charLimit);
+    }
+    sub.trim();
+    if (sub.length() == 0){
+      continue;
     }
     if (textCursor + Font->Height < y_limit) {
       Paint_DrawString_EN(start_x, textCursor, sub.c_str(), &Font12, Color_Foreground, Color_Background);
@@ -204,7 +211,8 @@ int printText(String text,
     }
 
   }
-  if (textCursor + Font->Height < y_limit) {
+  text.trim(); 
+  if (text.length() >0 && textCursor + Font->Height < y_limit) {
     Serial.println(text);
     Paint_DrawString_EN(start_x, textCursor, text.c_str(), Font, Color_Foreground, Color_Background);
     textCursor += Font->Height;
@@ -231,6 +239,9 @@ void drawEvents() {
         time_t end = event["end"].as<int>();
         time_t myTimeZone_end = myTimeZone.tzTime(end, UTC_TIME);
         String description = event["description"].as<String>();
+        if (description == "null" || description == "--"){
+          description = "";
+        }
         String location = event["location"].as<String>();
         drawEvent(title, myTimeZone_start, myTimeZone_end, description);
       }
@@ -244,7 +255,7 @@ void drawEvents() {
 void drawEvent(String title, time_t start, time_t end, String description) {
   int y_start = getY(start);
   int y_end = getY(end);
-  if (y_start < 0 || y_end > HEIGHT) {
+  if (y_start < GRID_LINE_OFFSET_TOP || y_end > HEIGHT) {
     Serial.println("Event out of range");
     return;
   }
@@ -267,7 +278,7 @@ void drawEvent(String title, time_t start, time_t end, String description) {
   drawRoundedRect(x_left, y_start, x_right, y_end, borderRadius, BLACK, DOT_PIXEL_1X1, fill);
   //draw text
   int text_x = GRID_LINE_OFFSET_LEFT + borderRadius;
-  int textCursor = y_start + borderRadius;
+  int textCursor = y_start + borderRadius/2;
   textCursor = printText(title , text_x , textCursor, x_right - borderRadius, y_end - borderRadius, &Font20, Color_Background, Color_Foreground);
   textCursor = printText(myTimeZone.dateTime(start, "(H:i - ") + myTimeZone.dateTime(end, "H:i)"), text_x , textCursor, x_right - borderRadius, y_end - borderRadius, &Font12, Color_Background, Color_Foreground);
   textCursor = printText(removeHtml(description), text_x, textCursor, x_right - borderRadius, y_end - borderRadius, &Font12, Color_Background, Color_Foreground);
@@ -281,10 +292,15 @@ void drawAgenda() {
   centerText(10,  myTimeZone.dateTime(myTimeZone.now(), "d.m.y (~C~W W)"), &Font24, BLACK, WHITE);
   centerText(35, "Last update: " + myTimeZone.dateTime("H:i:s"), &Font20, BLACK,  WHITE);
   time_t t = gridStart;
-  for (int i = 0; i < 8; i++) {
+  for (int i = 0; i < SHOW_HRS; i++) {
     Paint_DrawString_EN(8, GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H, myTimeZone.dateTime(t, "H:00").c_str(), &Font12, WHITE, BLACK);
-    Paint_DrawLine(GRID_LINE_OFFSET_LEFT, GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H, WIDTH, GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
-    t = t + HOUR; //+1h
+    t += HOUR;
+    //full hour line
+    int hour_y = GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H ;
+    int half_hour_y = hour_y + GRID_SPACING_H / 2;
+    Paint_DrawLine(GRID_LINE_OFFSET_LEFT, hour_y, WIDTH, hour_y, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    // half hour line
+    Paint_DrawLine(GRID_LINE_OFFSET_LEFT, half_hour_y, WIDTH, half_hour_y, BLACK, DOT_PIXEL_1X1, LINE_STYLE_DOTTED);
   }
   drawEvents();
   drawCurrentTimeMarker();
@@ -307,13 +323,15 @@ void doClear() {
   submit();
 }
 
-
+String str_text;
 
 void setText() {
   String postBody = server.arg("plain");
-  clear();
-  printText(postBody);
-  submit();
+  //Serial.println(postBody);
+  str_text = postBody;
+  //clear();
+  //printText(postBody);
+  //submit();
 }
 
 void submit() {
@@ -348,7 +366,12 @@ void restServerRouting() {
   server.on(F("/setEvents"), HTTP_POST, setEvents);
   server.on(F("/clear"), HTTP_GET, doClear);
   server.on(F("/setText"), HTTP_POST, setText);
-
+  server.on("/getEvents", HTTP_GET, []() {
+    server.send(200, F("application/json"), str_events);
+  });
+  server.on("/getText", HTTP_GET, []() {
+    server.send(200, F("application/json"), str_text);
+  });
 }
 
 // Manage not found URL
