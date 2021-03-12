@@ -40,6 +40,9 @@ Timezone myTimeZone;
 #define MINUTE 60
 
 #define GRID_LINE_OFFSET_LEFT 45
+
+#define ALL_DAY_START 60
+#define ALL_DAY_HEIGHT 20
 #define GRID_LINE_OFFSET_TOP 100
 #define EVENT_OFFSET_LEFT (GRID_LINE_OFFSET_LEFT + 5)
 #define EVENT_OFFSET_RIGHT (WIDTH - 5)
@@ -68,6 +71,7 @@ byte eventOverlap[HEIGHT];
 byte eventOverlapDrawn[HEIGHT];
 
 time_t gridStart = 0;
+int allDayCount = 0;
 
 // create an empty array
 String str_events = "{}";
@@ -116,7 +120,7 @@ int getY(time_t t)
   int offset_h = offset / 3600;
   int offset_m = offset / 60 - offset_h * 60;
   int pixelOffset = offset_h * GRID_SPACING_H + ((int)offset_m * GRID_SPACING_M);
-  return 5 + GRID_LINE_OFFSET_TOP + pixelOffset;
+  return GRID_LINE_OFFSET_TOP + pixelOffset;
 }
 
 void drawArc(int x, int y, int radius, UWORD color, int startAngle, int EndAngle, DRAW_FILL fill)
@@ -277,7 +281,6 @@ int printText(String text,
     if (textCursor + Font->Height < y_limit)
     {
       Paint_DrawString_EN(start_x, textCursor, sub.c_str(), &Font12, Color_Foreground, Color_Background);
-      Serial.println(sub);
       textCursor += Font->Height;
     }
     else
@@ -288,7 +291,6 @@ int printText(String text,
   text.trim();
   if (text.length() > 0 && textCursor + Font->Height < y_limit)
   {
-    Serial.println(text);
     Paint_DrawString_EN(start_x, textCursor, text.c_str(), Font, Color_Foreground, Color_Background);
     textCursor += Font->Height;
   }
@@ -315,21 +317,34 @@ void computeOverlap()
       else
       {
         JsonObject event = doc.as<JsonObject>();
+        boolean allDay = String("true").equals(event["allDay"].as<String>());
+        if (allDay)
+        {
+          // dont count allday events into overlap
+          continue;
+        }
         time_t start = event["start"].as<int>();
         time_t myTimeZone_start = myTimeZone.tzTime(start, UTC_TIME);
         int startY = getY(myTimeZone_start);
         time_t end = event["end"].as<int>();
         time_t myTimeZone_end = myTimeZone.tzTime(end, UTC_TIME);
         int endY = getY(myTimeZone_end);
-        if (startY < GRID_LINE_OFFSET_TOP || endY > HEIGHT)
+
+        if (startY > HEIGHT || endY < GRID_LINE_OFFSET_TOP)
         {
-          Serial.println("Event out of range");
+          // out of range
           continue;
         }
-        for (int i = startY; i <= endY; i++)
+
+        // clamp to visible part of event
+        if (startY < GRID_LINE_OFFSET_TOP)
+          startY = GRID_LINE_OFFSET_TOP;
+        if (endY > HEIGHT)
+          endY = HEIGHT;
+
+        for (int i = startY; i < endY; i++)
         {
           eventOverlap[i] = eventOverlap[i] + 1;
-          Serial.printf("overlap %d = %d\n", i, eventOverlap[i]);
         }
       }
     } while (eventStream.findUntil(",", "]"));
@@ -339,6 +354,7 @@ void computeOverlap()
 void drawEvents()
 {
   computeOverlap();
+  allDayCount = 0;
   DynamicJsonDocument doc(2048);
   StringStream eventStream((String &)str_events);
   eventActive = false;
@@ -362,12 +378,14 @@ void drawEvents()
         time_t end = event["end"].as<int>();
         time_t myTimeZone_end = myTimeZone.tzTime(end, UTC_TIME);
         String description = event["description"].as<String>();
+        boolean allDay = String("true").equals(event["allDay"].as<String>());
+
         if (description == "null" || description == "--")
         {
           description = "";
         }
         String location = event["location"].as<String>();
-        drawEvent(title, myTimeZone_start, myTimeZone_end, description);
+        drawEvent(title, myTimeZone_start, myTimeZone_end, description, allDay);
       }
     } while (eventStream.findUntil(",", "]"));
   }
@@ -376,7 +394,7 @@ void drawEvents()
 int getOverlap(int y_start, time_t y_end)
 {
   int overlap = 0;
-  for (int i = y_start; i <= y_end; i++)
+  for (int i = y_start; i < y_end; i++)
   {
     if (eventOverlap[i] > overlap)
     {
@@ -389,47 +407,65 @@ int getOverlap(int y_start, time_t y_end)
 int getOverlapDrawn(int y_start, time_t y_end)
 {
   int overlapDrawn = 0;
-  for (int i = y_start; i <= y_end; i++)
+  for (int i = y_start; i < y_end; i++)
   {
     if (eventOverlapDrawn[i] > overlapDrawn)
     {
       overlapDrawn = eventOverlapDrawn[i];
     }
   }
-  for (int i = y_start; i <= y_end; i++)
+  for (int i = y_start; i < y_end; i++)
   {
-    eventOverlapDrawn[i] = overlapDrawn+1;
+    eventOverlapDrawn[i] = overlapDrawn + 1;
   }
   return overlapDrawn;
 }
 
-void drawEvent(String title, time_t start, time_t end, String description)
+void drawEvent(String title, time_t start, time_t end, String description, boolean allDay)
 {
   int y_start = getY(start);
   int y_end = getY(end);
-  if (y_start < GRID_LINE_OFFSET_TOP || y_end > HEIGHT)
+
+  boolean active = start <= myTimeZone.now() && end >= myTimeZone.now();
+  if (allDay)
   {
-    Serial.println("Event out of range");
-    return;
+    if (!active)
+    {
+      return;
+    }
+    y_start = ALL_DAY_START + allDayCount * ALL_DAY_HEIGHT;
+    y_end = y_start + ALL_DAY_HEIGHT;
+    allDayCount += 1;
+  }
+  else
+  {
+    if (y_start > HEIGHT || y_end < GRID_LINE_OFFSET_TOP)
+      // out of range
+      return;
+
+    // clamp to visible range
+    if (y_start < GRID_LINE_OFFSET_TOP)
+      y_start = GRID_LINE_OFFSET_TOP;
+    if (y_end > HEIGHT)
+      y_end = HEIGHT;
   }
 
   int x_left = EVENT_OFFSET_LEFT;
   int x_right = EVENT_OFFSET_RIGHT;
   int overlap = getOverlap(y_start, y_end);
-  Serial.printf("Overlap: %d", overlap);
   if (overlap > 1)
   {
     int overlapDrawn = getOverlapDrawn(y_start, y_end);
-    int eventWidth = (EVENT_OFFSET_RIGHT - EVENT_OFFSET_LEFT)/overlap;
+    int eventWidth = (EVENT_OFFSET_RIGHT - EVENT_OFFSET_LEFT) / overlap;
     x_left = EVENT_OFFSET_LEFT + eventWidth * overlapDrawn;
-    x_right = EVENT_OFFSET_LEFT + eventWidth * (overlapDrawn+1);
+    x_right = EVENT_OFFSET_LEFT + eventWidth * (overlapDrawn + 1);
   }
-  boolean active = start <= myTimeZone.now() && end >= myTimeZone.now();
+
   DRAW_FILL fill = DRAW_FILL_EMPTY;
   UWORD Color_Foreground = BLACK;
   UWORD Color_Background = WHITE;
   Paint_SelectImage(BlackImage);
-  if (active)
+  if (active && !allDay)
   {
     eventActive = true;
     Paint_SelectImage(RYImage);
@@ -443,7 +479,7 @@ void drawEvent(String title, time_t start, time_t end, String description)
   //draw text
   int text_x = x_left + borderRadius;
   int textCursor = y_start + borderRadius / 2;
-  int x_limit =  x_right - borderRadius;
+  int x_limit = x_right - borderRadius;
   int y_limit = y_end;
   sFONT titleFont = Font20;
   // make titlefont smaller for short events
@@ -469,17 +505,16 @@ void drawAgenda()
   clear();
   Paint_SelectImage(BlackImage);
   gridStart = myTimeZone.now() - HISTORY_HRS * HOUR - myTimeZone.minute() * MINUTE - myTimeZone.second(); // 2h in the past
-  Serial.println("GridStart=" + myTimeZone.dateTime(gridStart));
   centerText(10, myTimeZone.dateTime(myTimeZone.now(), "d.m.y (~C~W W)"), &Font24, BLACK, WHITE);
   centerText(35, "Last update: " + myTimeZone.dateTime("H:i:s"), &Font20, BLACK, WHITE);
 
   time_t t = gridStart;
   for (int i = 0; i < SHOW_HRS; i++)
   {
-    Paint_DrawString_EN(8, GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H, myTimeZone.dateTime(t, "H:00").c_str(), &Font12, WHITE, BLACK);
+    Paint_DrawString_EN(8, GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H - 6, myTimeZone.dateTime(t, "H:00").c_str(), &Font12, WHITE, BLACK);
     t += HOUR;
     //full hour line
-    int hour_y = GRID_LINE_OFFSET_TOP + 5 + i * GRID_SPACING_H;
+    int hour_y = GRID_LINE_OFFSET_TOP + i * GRID_SPACING_H;
     int half_hour_y = hour_y + GRID_SPACING_H / 2;
     Paint_DrawLine(GRID_LINE_OFFSET_LEFT, hour_y, WIDTH, hour_y, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
     // half hour line
@@ -511,11 +546,10 @@ String str_text;
 void setText()
 {
   String postBody = server.arg("plain");
-  //Serial.println(postBody);
   str_text = postBody;
-  //clear();
-  //printText(postBody);
-  //submit();
+  clear();
+  printText(postBody);
+  submit();
 }
 
 void submit()
@@ -533,14 +567,10 @@ void setEvents()
   // To get the status of the result you can get the http status so
   DynamicJsonDocument doc(2048);
   doc["status"] = "OK";
-  Serial.print(F("Stream..."));
   String buf;
   serializeJson(doc, buf);
   server.send(201, F("application/json"), buf);
-
   drawAgenda();
-
-  Serial.println(F("done."));
 }
 
 // Define routing
@@ -584,7 +614,7 @@ void setup()
 {
 
   DEV_Module_Init();
-  Serial.println("EPD_7IN5B_HD_test Demo\r\n");
+  Serial.println("Agenda E-Paper Display");
   Serial.println("e-Paper Init and Clear...\r\n");
   EPD_7IN5B_HD_Init();
   DEV_Delay_ms(500);
@@ -620,7 +650,6 @@ void setup()
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  Serial.println("");
 
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED)
@@ -652,7 +681,7 @@ void setup()
   // Start server
   server.begin();
   Serial.println("HTTP server started");
-  //Paint_SetRotate(90);
+  
   drawAgenda();
 }
 
