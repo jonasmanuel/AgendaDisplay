@@ -251,7 +251,7 @@ int printText(String text,
               UWORD Color_Background = WHITE)
 {
   int textCursor = start_y;
-  int charLimit = (x_limit - start_x) / Font12.Width;
+  int charLimit = (x_limit - start_x) / Font->Width;
   while (text.length() > charLimit) //|| text.indexOf("\n") != -1)
   {
     String sub;
@@ -280,7 +280,7 @@ int printText(String text,
     }
     if (textCursor + Font->Height < y_limit)
     {
-      Paint_DrawString_EN(start_x, textCursor, sub.c_str(), &Font12, Color_Foreground, Color_Background);
+      Paint_DrawString_EN(start_x, textCursor, sub.c_str(), Font, Color_Foreground, Color_Background);
       textCursor += Font->Height;
     }
     else
@@ -445,9 +445,13 @@ void drawEvent(String title, time_t start, time_t end, String description, boole
 
     // clamp to visible range
     if (y_start < GRID_LINE_OFFSET_TOP)
+    {
       y_start = GRID_LINE_OFFSET_TOP;
+    }
     if (y_end > HEIGHT)
+    {
       y_end = HEIGHT;
+    }
   }
 
   int x_left = EVENT_OFFSET_LEFT;
@@ -681,7 +685,7 @@ void setup()
   // Start server
   server.begin();
   Serial.println("HTTP server started");
-  
+
   drawAgenda();
 }
 
