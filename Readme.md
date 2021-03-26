@@ -1,15 +1,34 @@
 # E-Paper Agenda Display
 
-Renders todays agenda on an e-paper display. The events are received through a webserver running on the esp32.
+Renders todays agenda on an e-paper display. The events are received through a webserver running on the esp32. The current version is using a Waveshare 7.5'' HD (B) Black/Red/White Epaper Display.
+
+![Demo Image](doc/demo.png)
+
+## Features:
+- Show Todays events in an eight hour time frame around the current time (configurable)
+- Runs as a webserver, events can be POSTed to the /setEvents endpoint in JSON format
+- Show current time as a marker, automatically refreshing every 5 minutes
+- Current event is highlighted in Red
+- supports overlapping events
+- supports all day events
+- automatic line breaking and shortening of description texts to fit into event box
+- auto select smaller title fonts for short events
+
+### Planned features
+- extract into more resusable, standalone library
+- publish fixes and improvements for waveshare library
+- support week and month views
+
 ## Expected JSON Format
 ````
 {
-    "events" : [
+    "events":[
         {
-            "start" : "1615244400" // starttime in UTC seconds
-            "end": "1615246200" // endtime in UTC seconds
-            "title": "The event Title"
-            "description": "The event description"
+            "start" : "1615244400", // starttime in UTC seconds
+            "end": "1615246200", // endtime in UTC seconds
+            "title": "The event Title",
+            "description": "The event description",
+            "allDay": "true"/"false"
         },
         ...
     ]
@@ -24,3 +43,5 @@ Renders todays agenda on an e-paper display. The events are received through a w
 - ezTime by Rop Gonggrijp Version 0.8.3
 
     Does NTP, datetime formatted strings, milliseconds and timezones. Drop-in replacement for Arduino Time Library See more on [Github](https://github.com/ropg/ezTime)
+
+- builtin ESP32 Libraries: WiFi, WebServer, ESPmDNS, SPIFFS, FS
